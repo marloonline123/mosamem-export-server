@@ -16,6 +16,7 @@
   "dependencies": {
     "@types/express": "^5.0.6",
     "@types/puppeteer": "^5.4.7",
+    "dotenv": "^17.2.3",
     "express": "^5.2.1",
     "node-fetch": "^3.3.2",
     "nodemon": "^3.1.11",
