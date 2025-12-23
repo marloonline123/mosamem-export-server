@@ -1,0 +1,1282 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Design Export</title>
+    <script src="https://unpkg.com/konva@9/konva.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            background: transparent;
+            overflow: hidden;
+            margin: 0;
+            padding: 0;
+        }
+
+        #container {
+            background: transparent;
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="container"></div>
+
+    <script>
+        // Design data from Laravel
+        const canvasData = @json($canvas);
+        const objectsData = @json($objects);
+        const videoCurrentTime = {{ $videoCurrentTime ?? 0 }};
+
+        // Create Konva stage
+        const stage = new Konva.Stage({
+            container: 'container',
+            width: canvasData.width,
+            height: canvasData.height,
+        });
+
+        // Create main layer
+        const layer = new Konva.Layer();
+        stage.add(layer);
+
+        // Generate canvas background
+        function createCanvasBackground() {
+            const background = new Konva.Rect({
+                x: 0,
+                y: 0,
+                width: canvasData.width,
+                height: canvasData.height,
+            });
+
+            if (canvasData.backgroundGradient) {
+                const gradient = canvasData.backgroundGradient;
+                if (gradient.type === 'linear') {
+                    const gradientColors = [];
+                    gradient.colors.forEach(colorStop => {
+                        gradientColors.push(colorStop.stop);
+                        gradientColors.push(colorStop.color);
+                    });
+
+                    background.fillLinearGradientColorStops(gradientColors);
+                    background.fillLinearGradientStartPoint({
+                        x: 0,
+                        y: 0
+                    });
+                    background.fillLinearGradientEndPoint({
+                        x: gradient.angle === 90 ? 0 : canvasData.width,
+                        y: gradient.angle === 90 ? canvasData.height : 0
+                    });
+                } else if (gradient.type === 'radial') {
+                    const gradientColors = [];
+                    gradient.colors.forEach(colorStop => {
+                        gradientColors.push(colorStop.stop);
+                        gradientColors.push(colorStop.color);
+                    });
+
+                    background.fillRadialGradientColorStops(gradientColors);
+                    background.fillRadialGradientStartPoint({
+                        x: (gradient.centerX || 50) * canvasData.width / 100,
+                        y: (gradient.centerY || 50) * canvasData.height / 100
+                    });
+                    background.fillRadialGradientEndPoint({
+                        x: (gradient.centerX || 50) * canvasData.width / 100,
+                        y: (gradient.centerY || 50) * canvasData.height / 100
+                    });
+                    background.fillRadialGradientStartRadius(0);
+                    background.fillRadialGradientEndRadius((gradient.radius || 50) * Math.max(canvasData.width, canvasData
+                        .height) / 100);
+                }
+            } else {
+                background.fill(canvasData.backgroundColor || '#ffffff');
+            }
+
+            return background;
+        }
+
+        // Create Konva elements from data
+        function createKonvaElement(elementData) {
+            const baseProps = {
+                x: elementData.x || 0,
+                y: elementData.y || 0,
+                width: elementData.width || 100,
+                height: elementData.height || 100,
+                rotation: elementData.rotation || 0,
+                scaleX: elementData.scaleX || 1,
+                scaleY: elementData.scaleY || 1,
+                opacity: elementData.opacity !== undefined ? elementData.opacity : 1,
+                visible: elementData.visible !== undefined ? elementData.visible : true,
+            };
+
+            let element;
+
+            // Check both type and customType for video elements
+            const elementType = elementData.customType || elementData.type;
+
+            switch (elementType) {
+                case 'text':
+                    const textProps = {
+                        ...baseProps,
+                        text: elementData.text || 'Text',
+                        fontSize: elementData.fontSize || 24,
+                        fontFamily: elementData.fontFamily || 'Arial',
+                        fontStyle: elementData.fontStyle || 'normal',
+                        fontVariant: elementData.fontWeight || 'normal',
+                        fill: elementData.gradient ? undefined : (elementData.fill || '#000000'),
+                        align: elementData.textAlign || 'left',
+                        lineHeight: elementData.lineHeight || 1.2,
+                        letterSpacing: elementData.letterSpacing || 0,
+                        padding: elementData.textPadding || 0,
+                        wrap: 'word',
+                    };
+
+                    // Add gradient properties if present - using the same approach as TextRenderer.tsx
+                    if (elementData.gradient) {
+                        const gradient = elementData.gradient;
+                        if (gradient.type === 'linear') {
+                            const angle = (gradient.angle || 0) * Math.PI / 180;
+                            const centerX = baseProps.width / 2;
+                            const centerY = baseProps.height / 2;
+                            const radius = Math.max(baseProps.width, baseProps.height) / 2;
+
+                            textProps.fillLinearGradientStartPoint = {
+                                x: centerX - Math.cos(angle) * radius,
+                                y: centerY - Math.sin(angle) * radius
+                            };
+                            textProps.fillLinearGradientEndPoint = {
+                                x: centerX + Math.cos(angle) * radius,
+                                y: centerY + Math.sin(angle) * radius
+                            };
+                            textProps.fillLinearGradientColorStops = gradient.colors.flatMap(color => [color.stop, color
+                                .color
+                            ]);
+                        } else if (gradient.type === 'radial') {
+                            textProps.fillRadialGradientStartPoint = {
+                                x: gradient.centerX || baseProps.width / 2,
+                                y: gradient.centerY || baseProps.height / 2
+                            };
+                            textProps.fillRadialGradientEndPoint = {
+                                x: gradient.centerX || baseProps.width / 2,
+                                y: gradient.centerY || baseProps.height / 2
+                            };
+                            textProps.fillRadialGradientStartRadius = 0;
+                            textProps.fillRadialGradientEndRadius = gradient.radius || Math.max(baseProps.width, baseProps
+                                .height) / 2;
+                            textProps.fillRadialGradientColorStops = gradient.colors.flatMap(color => [color.stop, color
+                                .color
+                            ]);
+                        }
+                    }
+
+                    element = new Konva.Text(textProps);
+
+                    // Handle text stroke
+                    if (elementData.strokeWidth && elementData.strokeWidth > 0) {
+                        element.stroke(elementData.stroke || '#000000');
+                        element.strokeWidth(elementData.strokeWidth);
+                    }
+                    break;
+
+                case 'rect':
+                    const rectProps = {
+                        ...baseProps,
+                        fill: elementData.gradient ? undefined : (elementData.fill || '#3b82f6'),
+                        cornerRadius: elementData.cornerRadius || elementData.borderRadius || 0,
+                        stroke: elementData.borderColor || elementData.stroke,
+                        strokeWidth: elementData.borderWidth || elementData.strokeWidth || 0,
+                        shadowColor: elementData.shadowColor,
+                        shadowBlur: elementData.shadowBlur || 0,
+                        shadowOffsetX: elementData.shadowOffsetX || 0,
+                        shadowOffsetY: elementData.shadowOffsetY || 0,
+                        dash: elementData.borderStyle === 'dashed' ? [5, 5] : elementData.borderStyle === 'dotted' ? [2,
+                            2
+                        ] : undefined
+                    };
+
+                    // Add gradient properties if present - using the same approach as TextRenderer.tsx
+                    if (elementData.gradient) {
+                        const gradient = elementData.gradient;
+                        if (gradient.type === 'linear') {
+                            const angle = (gradient.angle || 0) * Math.PI / 180;
+                            const centerX = baseProps.width / 2;
+                            const centerY = baseProps.height / 2;
+                            const radius = Math.max(baseProps.width, baseProps.height) / 2;
+
+                            rectProps.fillLinearGradientStartPoint = {
+                                x: centerX - Math.cos(angle) * radius,
+                                y: centerY - Math.sin(angle) * radius
+                            };
+                            rectProps.fillLinearGradientEndPoint = {
+                                x: centerX + Math.cos(angle) * radius,
+                                y: centerY + Math.sin(angle) * radius
+                            };
+                            rectProps.fillLinearGradientColorStops = gradient.colors.flatMap(color => [color.stop, color
+                                .color
+                            ]);
+                        } else if (gradient.type === 'radial') {
+                            rectProps.fillRadialGradientStartPoint = {
+                                x: (gradient.centerX || 50) * baseProps.width / 100,
+                                y: (gradient.centerY || 50) * baseProps.height / 100
+                            };
+                            rectProps.fillRadialGradientEndPoint = {
+                                x: (gradient.centerX || 50) * baseProps.width / 100,
+                                y: (gradient.centerY || 50) * baseProps.height / 100
+                            };
+                            rectProps.fillRadialGradientStartRadius = 0;
+                            rectProps.fillRadialGradientEndRadius = (gradient.radius || 50) * Math.max(baseProps.width,
+                                baseProps.height) / 100;
+                            rectProps.fillRadialGradientColorStops = gradient.colors.flatMap(color => [color.stop, color
+                                .color
+                            ]);
+                        }
+                    }
+
+                    element = new Konva.Rect(rectProps);
+                    break;
+
+                case 'circle':
+                    const circleProps = {
+                        ...baseProps,
+                        radius: Math.min(baseProps.width, baseProps.height) / 2,
+                        fill: elementData.gradient ? undefined : (elementData.fill || '#ef4444'),
+                        stroke: elementData.borderColor || elementData.stroke,
+                        strokeWidth: elementData.borderWidth || elementData.strokeWidth || 0,
+                        shadowColor: elementData.shadowColor,
+                        shadowBlur: elementData.shadowBlur || 0,
+                        shadowOffsetX: elementData.shadowOffsetX || 0,
+                        shadowOffsetY: elementData.shadowOffsetY || 0,
+                    };
+
+                    // Add gradient properties if present - using the same approach as TextRenderer.tsx
+                    if (elementData.gradient) {
+                        const gradient = elementData.gradient;
+                        if (gradient.type === 'linear') {
+                            const angle = (gradient.angle || 0) * Math.PI / 180;
+                            const centerX = baseProps.width / 2;
+                            const centerY = baseProps.height / 2;
+                            const radius = Math.max(baseProps.width, baseProps.height) / 2;
+
+                            circleProps.fillLinearGradientStartPoint = {
+                                x: centerX - Math.cos(angle) * radius,
+                                y: centerY - Math.sin(angle) * radius
+                            };
+                            circleProps.fillLinearGradientEndPoint = {
+                                x: centerX + Math.cos(angle) * radius,
+                                y: centerY + Math.sin(angle) * radius
+                            };
+                            circleProps.fillLinearGradientColorStops = gradient.colors.flatMap(color => [color.stop, color
+                                .color
+                            ]);
+                        } else if (gradient.type === 'radial') {
+                            circleProps.fillRadialGradientStartPoint = {
+                                x: (gradient.centerX || 50) * baseProps.width / 100,
+                                y: (gradient.centerY || 50) * baseProps.height / 100
+                            };
+                            circleProps.fillRadialGradientEndPoint = {
+                                x: (gradient.centerX || 50) * baseProps.width / 100,
+                                y: (gradient.centerY || 50) * baseProps.height / 100
+                            };
+                            circleProps.fillRadialGradientStartRadius = 0;
+                            circleProps.fillRadialGradientEndRadius = (gradient.radius || 50) * Math.max(baseProps.width,
+                                baseProps.height) / 100;
+                            circleProps.fillRadialGradientColorStops = gradient.colors.flatMap(color => [color.stop, color
+                                .color
+                            ]);
+                        }
+                    }
+
+                    element = new Konva.Circle(circleProps);
+                    break;
+
+                case 'line':
+                    element = new Konva.Line({
+                        x: baseProps.x,
+                        y: baseProps.y,
+                        points: elementData.points || [0, 0, baseProps.width, 0],
+                        stroke: elementData.stroke || '#000000',
+                        strokeWidth: elementData.strokeWidth || 2,
+                        rotation: baseProps.rotation,
+                        scaleX: baseProps.scaleX,
+                        scaleY: baseProps.scaleY,
+                        opacity: baseProps.opacity,
+                        visible: baseProps.visible,
+                    });
+                    break;
+
+                case 'video':
+                    console.log('Creating video element with data:', elementData);
+                    // Create video element
+                    element = new Konva.Group(baseProps);
+
+                    if (elementData.src) {
+                        console.log('Video source:', elementData.src);
+                        const videoObj = document.createElement('video');
+
+                        // Set up video element properties first
+                        videoObj.crossOrigin = 'anonymous';
+                        videoObj.preload = 'auto'; // Changed from 'metadata' to 'auto' for better seeking
+                        videoObj.muted = false; // Keep audio for export
+                        videoObj.loop = false; // No looping for export
+                        videoObj.playsInline = true;
+                        videoObj.style.position = 'absolute';
+                        videoObj.style.left = '-9999px'; // Hide off-screen but keep in DOM
+                        videoObj.style.top = '-9999px';
+                        videoObj.style.width = '1px';
+                        videoObj.style.height = '1px';
+
+                        // Add to DOM so Puppeteer can find it
+                        document.body.appendChild(videoObj);
+
+                        videoObj.onloadedmetadata = function () {
+                            console.log('Video metadata loaded:', elementData.src);
+                            console.log('Video dimensions:', videoObj.videoWidth, 'x', videoObj.videoHeight);
+                            console.log('Video duration:', videoObj.duration);
+
+                            // Wait for video to be fully loaded and seekable
+                            const waitForSeekable = () => {
+                                if (videoObj.seekable && videoObj.seekable.length > 0) {
+                                    console.log('✅ Video is seekable:', {
+                                        seekableStart: videoObj.seekable.start(0),
+                                        seekableEnd: videoObj.seekable.end(0),
+                                        duration: videoObj.duration
+                                    });
+                                    createKonvaVideoElement();
+                                } else {
+                                    console.log('⏳ Video not yet seekable, waiting...');
+                                    setTimeout(waitForSeekable, 100);
+                                }
+                            };
+
+                            const createKonvaVideoElement = () => {
+                                // Create the main video image
+                                const konvaVideo = new Konva.Image({
+                                    x: 0,
+                                    y: 0,
+                                    image: videoObj,
+                                    width: baseProps.width,
+                                    height: baseProps.height,
+                                });
+
+                                // Apply border radius clipping if needed
+                                if (elementData.borderRadius && elementData.borderRadius > 0) {
+                                    element.clipFunc((ctx) => {
+                                        ctx.beginPath();
+                                        const radius = Math.min(elementData.borderRadius, baseProps.width / 2,
+                                            baseProps.height / 2);
+                                        if (ctx.roundRect) {
+                                            ctx.roundRect(0, 0, baseProps.width, baseProps.height, radius);
+                                        } else {
+                                            // Fallback for browsers that don't support roundRect
+                                            ctx.moveTo(radius, 0);
+                                            ctx.lineTo(baseProps.width - radius, 0);
+                                            ctx.quadraticCurveTo(baseProps.width, 0, baseProps.width, radius);
+                                            ctx.lineTo(baseProps.width, baseProps.height - radius);
+                                            ctx.quadraticCurveTo(baseProps.width, baseProps.height, baseProps
+                                                .width - radius, baseProps.height);
+                                            ctx.lineTo(radius, baseProps.height);
+                                            ctx.quadraticCurveTo(0, baseProps.height, 0, baseProps.height - radius);
+                                            ctx.lineTo(0, radius);
+                                            ctx.quadraticCurveTo(0, 0, radius, 0);
+                                        }
+                                        ctx.closePath();
+                                    });
+                                }
+
+                                element.add(konvaVideo);
+
+                                // Set video time if specified
+                                if (videoCurrentTime !== undefined && videoCurrentTime > 0) {
+                                    videoObj.currentTime = videoCurrentTime;
+                                }
+
+                                // Keep video paused for deterministic frame export
+                                console.log('Video loaded and ready for seeking (staying paused)');
+                                videoObj.pause(); // Ensure it stays paused
+
+                                layer.batchDraw();
+
+                                // Increment loaded videos counter
+                                window.videosLoaded = (window.videosLoaded || 0) + 1;
+                                console.log('Video loaded count:', window.videosLoaded, 'of', window.videosToLoad);
+
+                                // Check if all media is loaded
+                                const totalLoaded = (window.imagesLoaded || 0) + (window.videosLoaded || 0);
+                                const totalToLoad = window.imagesToLoad + window.videosToLoad;
+                                if (totalLoaded >= totalToLoad) {
+                                    setTimeout(() => {
+                                        window.designReady = true;
+                                        console.log('All media loaded, design ready');
+                                    }, 500);
+                                }
+                            };
+
+                            // Start the seekable check
+                            waitForSeekable();
+                        };
+
+                        videoObj.onloadeddata = function () {
+                            console.log('Video data loaded, can start playback');
+                        };
+
+                        videoObj.oncanplay = function () {
+                            console.log('Video can start playing');
+                        };
+
+                        videoObj.onerror = function (e) {
+                            console.error('Failed to load video:', elementData.src);
+                            console.error('Video error code:', videoObj.error ? videoObj.error.code : 'unknown');
+                            console.error('Video error message:', videoObj.error ? videoObj.error.message : 'unknown');
+                            console.error('Video network state:', videoObj.networkState);
+                            console.error('Video ready state:', videoObj.readyState);
+
+                            // Create a placeholder rectangle if video fails to load
+                            const placeholder = new Konva.Rect({
+                                x: 0,
+                                y: 0,
+                                width: baseProps.width,
+                                height: baseProps.height,
+                                fill: '#f0f0f0',
+                                stroke: '#ccc',
+                                strokeWidth: 1,
+                            });
+
+                            // Add play icon
+                            const playIcon = new Konva.RegularPolygon({
+                                x: baseProps.width / 2,
+                                y: baseProps.height / 2,
+                                sides: 3,
+                                radius: Math.min(baseProps.width, baseProps.height) / 8,
+                                fill: '#666',
+                                rotation: 90,
+                            });
+
+                            element.add(placeholder);
+                            element.add(playIcon);
+                            layer.batchDraw();
+
+                            // Still count as "loaded" to not block the export
+                            window.videosLoaded = (window.videosLoaded || 0) + 1;
+                            console.log('Video failed but counted as loaded:', window.videosLoaded, 'of', window
+                                .videosToLoad);
+
+                            // Check if all media is loaded
+                            const totalLoaded = (window.imagesLoaded || 0) + (window.videosLoaded || 0);
+                            const totalToLoad = window.imagesToLoad + window.videosToLoad;
+                            if (totalLoaded >= totalToLoad) {
+                                setTimeout(() => {
+                                    window.designReady = true;
+                                    console.log('All media processed (some failed), design ready');
+                                }, 500);
+                            }
+                        };
+
+                        // Convert relative URLs to absolute URLs and ensure compatibility
+                        let videoSrc = elementData.src;
+                        if (videoSrc.startsWith('/')) {
+                            videoSrc = window.location.origin + videoSrc;
+                        }
+
+                        console.log('Setting video source to:', videoSrc);
+
+                        // Set the source last to trigger loading
+                        videoObj.src = videoSrc;
+
+                        // Add additional event listeners for better debugging
+                        videoObj.addEventListener('loadstart', () => {
+                            console.log('Video load started');
+                        });
+
+                        videoObj.addEventListener('progress', () => {
+                            console.log('Video loading progress');
+                        });
+
+                        videoObj.addEventListener('canplay', () => {
+                            console.log('Video can start playing');
+                        });
+
+                        videoObj.addEventListener('canplaythrough', () => {
+                            console.log('Video can play through without buffering');
+                        });
+                    } else {
+                        console.warn('Video element has no src:', elementData);
+                    }
+                    break;
+
+                case 'image':
+                    // Create image element
+                    element = new Konva.Group(baseProps);
+
+                    if (elementData.src) {
+                        const imageObj = new Image();
+                        imageObj.onload = function () {
+                            console.log('Image loaded:', elementData.src);
+
+                            // Create the main image
+                            const konvaImage = new Konva.Image({
+                                x: 0,
+                                y: 0,
+                                image: imageObj,
+                                width: baseProps.width,
+                                height: baseProps.height,
+                            });
+
+                            // Apply border radius clipping if needed
+                            if (elementData.borderRadius && elementData.borderRadius > 0) {
+                                element.clipFunc((ctx) => {
+                                    ctx.beginPath();
+                                    const radius = Math.min(elementData.borderRadius, baseProps.width / 2,
+                                        baseProps.height / 2);
+                                    if (ctx.roundRect) {
+                                        ctx.roundRect(0, 0, baseProps.width, baseProps.height, radius);
+                                    } else {
+                                        // Fallback for browsers that don't support roundRect
+                                        ctx.moveTo(radius, 0);
+                                        ctx.lineTo(baseProps.width - radius, 0);
+                                        ctx.quadraticCurveTo(baseProps.width, 0, baseProps.width, radius);
+                                        ctx.lineTo(baseProps.width, baseProps.height - radius);
+                                        ctx.quadraticCurveTo(baseProps.width, baseProps.height, baseProps
+                                            .width - radius, baseProps.height);
+                                        ctx.lineTo(radius, baseProps.height);
+                                        ctx.quadraticCurveTo(0, baseProps.height, 0, baseProps.height - radius);
+                                        ctx.lineTo(0, radius);
+                                        ctx.quadraticCurveTo(0, 0, radius, 0);
+                                    }
+                                    ctx.closePath();
+                                });
+                            }
+
+                            element.add(konvaImage);
+
+                            // Add fade effect if present
+                            if (elementData.fadeEffect && elementData.fadeEffect.enabled) {
+                                // Create a canvas for the fade effect
+                                const canvas = document.createElement('canvas');
+                                const ctx = canvas.getContext('2d');
+
+                                if (ctx) {
+                                    canvas.width = baseProps.width;
+                                    canvas.height = baseProps.height;
+
+                                    // Draw the original image scaled to fit
+                                    ctx.drawImage(imageObj, 0, 0, baseProps.width, baseProps.height);
+
+                                    // Create gradient for fade effect
+                                    let gradient;
+                                    const fadeIntensity = elementData.fadeEffect.intensity || 0.5;
+
+                                    switch (elementData.fadeEffect.direction) {
+                                        case 'top-to-bottom':
+                                            gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+                                            gradient.addColorStop(0, 'rgba(255,255,255,1)');
+                                            gradient.addColorStop(1, `rgba(255,255,255,${1 - fadeIntensity})`);
+                                            break;
+                                        case 'bottom-to-top':
+                                            gradient = ctx.createLinearGradient(0, canvas.height, 0, 0);
+                                            gradient.addColorStop(0, 'rgba(255,255,255,1)');
+                                            gradient.addColorStop(1, `rgba(255,255,255,${1 - fadeIntensity})`);
+                                            break;
+                                        case 'left-to-right':
+                                            gradient = ctx.createLinearGradient(0, 0, canvas.width, 0);
+                                            gradient.addColorStop(0, 'rgba(255,255,255,1)');
+                                            gradient.addColorStop(1, `rgba(255,255,255,${1 - fadeIntensity})`);
+                                            break;
+                                        case 'right-to-left':
+                                            gradient = ctx.createLinearGradient(canvas.width, 0, 0, 0);
+                                            gradient.addColorStop(0, 'rgba(255,255,255,1)');
+                                            gradient.addColorStop(1, `rgba(255,255,255,${1 - fadeIntensity})`);
+                                            break;
+                                        default:
+                                            gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+                                            gradient.addColorStop(0, 'rgba(255,255,255,1)');
+                                            gradient.addColorStop(1, `rgba(255,255,255,${1 - fadeIntensity})`);
+                                    }
+
+                                    // Apply the gradient as a mask using destination-in composition
+                                    ctx.globalCompositeOperation = 'destination-in';
+                                    ctx.fillStyle = gradient;
+                                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                                    // Update the image to use the processed canvas
+                                    konvaImage.image(canvas);
+                                }
+                            }
+
+                            layer.batchDraw();
+
+                            // Increment loaded images counter
+                            window.imagesLoaded = (window.imagesLoaded || 0) + 1;
+
+                            // Check if all media is loaded
+                            const totalLoaded = (window.imagesLoaded || 0) + (window.videosLoaded || 0);
+                            const totalToLoad = window.imagesToLoad + window.videosToLoad;
+                            if (totalLoaded >= totalToLoad) {
+                                setTimeout(() => {
+                                    window.designReady = true;
+                                    console.log('All media loaded, design ready');
+                                }, 500);
+                            }
+                        };
+
+                        imageObj.onerror = function () {
+                            console.error('Failed to load image:', elementData.src);
+                            // Create a placeholder rectangle if image fails to load
+                            const placeholder = new Konva.Rect({
+                                x: 0,
+                                y: 0,
+                                width: baseProps.width,
+                                height: baseProps.height,
+                                fill: '#f0f0f0',
+                                stroke: '#ccc',
+                                strokeWidth: 1,
+                            });
+                            element.add(placeholder);
+                            layer.batchDraw();
+
+                            // Still count as "loaded" to not block the export
+                            window.imagesLoaded = (window.imagesLoaded || 0) + 1;
+
+                            // Check if all media is loaded
+                            const totalLoaded = (window.imagesLoaded || 0) + (window.videosLoaded || 0);
+                            const totalToLoad = window.imagesToLoad + window.videosToLoad;
+                            if (totalLoaded >= totalToLoad) {
+                                setTimeout(() => {
+                                    window.designReady = true;
+                                    console.log('All media processed (some failed), design ready');
+                                }, 500);
+                            }
+                        };
+
+                        // Handle CORS and loading
+                        imageObj.crossOrigin = 'anonymous';
+
+                        // Convert relative URLs to absolute URLs
+                        let imageSrc = elementData.src;
+                        if (imageSrc.startsWith('/')) {
+                            imageSrc = window.location.origin + imageSrc;
+                        }
+
+                        imageObj.src = imageSrc;
+                    }
+                    break;
+
+                default:
+                    element = new Konva.Rect({
+                        ...baseProps,
+                        fill: '#f0f0f0',
+                    });
+                    break;
+            }
+
+            // Add common properties
+            if (element && elementData.borderWidth && elementData.borderWidth > 0) {
+                element.stroke(elementData.borderColor || '#000000');
+                element.strokeWidth(elementData.borderWidth);
+            }
+
+            // Add shadow
+            if (element && elementData.shadowBlur && elementData.shadowBlur > 0) {
+                element.shadowColor(elementData.shadowColor || '#000000');
+                element.shadowBlur(elementData.shadowBlur);
+                element.shadowOffsetX(elementData.shadowOffsetX || 0);
+                element.shadowOffsetY(elementData.shadowOffsetY || 0);
+            }
+
+            return element;
+        }
+
+        // Render the design
+        function renderDesign() {
+            console.log('Starting design render...');
+            console.log('Canvas data:', canvasData);
+            console.log('Objects data:', objectsData);
+
+            // Add canvas background
+            layer.add(createCanvasBackground());
+
+            // Sort objects by zIndex
+            const sortedObjects = objectsData.sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0));
+
+            // Count images and videos that need to load
+            let imagesToLoad = 0;
+            let videosToLoad = 0;
+            sortedObjects.forEach(elementData => {
+                if (elementData.visible !== false) {
+                    const elementType = elementData.customType || elementData.type;
+                    if (elementType === 'image' && elementData.src) {
+                        imagesToLoad++;
+                        console.log('Found image to load:', elementData.src);
+                    } else if (elementType === 'video' && elementData.src) {
+                        videosToLoad++;
+                        console.log('Found video to load:', elementData.src);
+                    }
+                }
+            });
+
+            // Initialize global counters
+            window.imagesToLoad = imagesToLoad;
+            window.videosToLoad = videosToLoad;
+            window.imagesLoaded = 0;
+            window.videosLoaded = 0;
+            window.designReady = false;
+
+            console.log('Images to load:', imagesToLoad);
+            console.log('Videos to load:', videosToLoad);
+
+            // Add all elements
+            sortedObjects.forEach(elementData => {
+                if (elementData.visible !== false) {
+                    console.log('Creating element:', elementData.type, elementData.id);
+                    const element = createKonvaElement(elementData);
+                    if (element) {
+                        layer.add(element);
+                        console.log('Added element to layer:', elementData.type);
+                    } else {
+                        console.warn('Failed to create element:', elementData.type, elementData.id);
+                    }
+                }
+            });
+
+            // Function to check if all media is loaded
+            function checkAllMediaLoaded() {
+                const totalLoaded = (window.imagesLoaded || 0) + (window.videosLoaded || 0);
+                const totalToLoad = window.imagesToLoad + window.videosToLoad;
+
+                console.log('Media loading check:', totalLoaded, 'of', totalToLoad, 'loaded');
+
+                if (totalLoaded >= totalToLoad) {
+                    console.log('All media loaded, marking design as ready');
+                    window.designReady = true;
+                    layer.batchDraw();
+                    return true;
+                }
+                return false;
+            }
+
+            // If no media to load, mark as ready immediately
+            if (imagesToLoad === 0 && videosToLoad === 0) {
+                console.log('No media to load, marking design as ready immediately');
+                layer.batchDraw();
+                setTimeout(() => {
+                    window.designReady = true;
+                    console.log('Design ready (no media)');
+                }, 1000);
+            } else {
+                // Initial draw
+                layer.batchDraw();
+
+                // Set a timeout fallback in case some media fails to load
+                setTimeout(() => {
+                    if (!window.designReady) {
+                        console.log('Timeout reached, forcing design ready state');
+                        console.log('Final status - Images loaded:', window.imagesLoaded, 'of', window
+                            .imagesToLoad);
+                        console.log('Final status - Videos loaded:', window.videosLoaded, 'of', window
+                            .videosToLoad);
+                        window.designReady = true;
+                        layer.batchDraw();
+                    }
+                }, 25000); // Increased timeout for videos
+
+                // Also check periodically
+                const checkInterval = setInterval(() => {
+                    if (checkAllMediaLoaded()) {
+                        clearInterval(checkInterval);
+                    }
+                }, 1000);
+
+                // Clear interval after timeout
+                setTimeout(() => {
+                    clearInterval(checkInterval);
+                }, 25000);
+            }
+        }
+
+        // Start rendering
+        renderDesign();
+
+
+        // ===== PUPPETEER FUNCTIONS - ADD THESE TO YOUR EXISTING CODE =====
+
+        // Make stage globally accessible for Puppeteer
+        window.__KONVA_STAGE__ = stage;
+
+        // Replace your window.loadDesign function with this corrected version:
+        window.loadDesign = function (designData) {
+            console.log('=== loadDesign called ===');
+            console.log('designData keys:', designData ? Object.keys(designData) : 'null');
+
+            if (!designData) {
+                console.warn('No design data provided');
+                window.designReady = true;
+                return;
+            }
+
+            let canvas, objects;
+
+            // Handle Laravel data structure - layers field contains full JSON
+            if (designData.layers) {
+                console.log('Processing Laravel layers field');
+                try {
+                    let parsedData;
+                    if (typeof designData.layers === 'string') {
+                        parsedData = JSON.parse(designData.layers);
+                    } else {
+                        parsedData = designData.layers;
+                    }
+
+                    canvas = parsedData.canvas || {
+                        width: 1920,
+                        height: 1080,
+                        backgroundColor: '#ffffff'
+                    };
+                    objects = parsedData.objects || [];
+                    console.log('Extracted from layers - Canvas:', canvas, 'Objects:', objects.length);
+
+                } catch (e) {
+                    console.error('Failed to parse layers:', e);
+                    canvas = {
+                        width: 1920,
+                        height: 1080,
+                        backgroundColor: '#ffffff'
+                    };
+                    objects = [];
+                }
+            } else if (designData.canvas && designData.objects) {
+                // Standard structure
+                canvas = designData.canvas;
+                objects = designData.objects;
+                console.log('Using standard structure');
+            } else {
+                console.warn('Unknown data structure');
+                canvas = {
+                    width: 1920,
+                    height: 1080,
+                    backgroundColor: '#ffffff'
+                };
+                objects = [];
+            }
+
+            // Clear existing content
+            layer.removeChildren();
+
+            // Update stage dimensions
+            stage.width(canvas.width || 1920);
+            stage.height(canvas.height || 1080);
+
+            // Recreate canvas background
+            const background = new Konva.Rect({
+                x: 0,
+                y: 0,
+                width: canvas.width || 1920,
+                height: canvas.height || 1080,
+            });
+
+            if (canvas.backgroundGradient) {
+                const gradient = canvas.backgroundGradient;
+                if (gradient.type === 'linear') {
+                    const gradientColors = [];
+                    gradient.colors.forEach(colorStop => {
+                        gradientColors.push(colorStop.stop);
+                        gradientColors.push(colorStop.color);
+                    });
+                    background.fillLinearGradientColorStops(gradientColors);
+                    background.fillLinearGradientStartPoint({
+                        x: 0,
+                        y: 0
+                    });
+                    background.fillLinearGradientEndPoint({
+                        x: gradient.angle === 90 ? 0 : canvas.width,
+                        y: gradient.angle === 90 ? canvas.height : 0
+                    });
+                } else if (gradient.type === 'radial') {
+                    const gradientColors = [];
+                    gradient.colors.forEach(colorStop => {
+                        gradientColors.push(colorStop.stop);
+                        gradientColors.push(colorStop.color);
+                    });
+                    background.fillRadialGradientColorStops(gradientColors);
+                    background.fillRadialGradientStartPoint({
+                        x: (gradient.centerX || 50) * canvas.width / 100,
+                        y: (gradient.centerY || 50) * canvas.height / 100
+                    });
+                    background.fillRadialGradientEndPoint({
+                        x: (gradient.centerX || 50) * canvas.width / 100,
+                        y: (gradient.centerY || 50) * canvas.height / 100
+                    });
+                    background.fillRadialGradientStartRadius(0);
+                    background.fillRadialGradientEndRadius((gradient.radius || 50) * Math.max(canvas.width, canvas
+                        .height) / 100);
+                }
+            } else {
+                background.fill(canvas.backgroundColor || '#ffffff');
+            }
+
+            layer.add(background);
+
+            // Add objects if they exist
+            if (objects && Array.isArray(objects) && objects.length > 0) {
+                console.log('Processing', objects.length, 'objects');
+                const sortedObjects = objects.sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0));
+
+                let videosToCreate = 0;
+                let videosCreated = 0;
+
+                sortedObjects.forEach((elementData, index) => {
+                    if (elementData.visible === false) return;
+
+                    console.log(`Processing object ${index}:`, {
+                        type: elementData.type,
+                        customType: elementData.customType,
+                        src: elementData.src,
+                        x: elementData.x,
+                        y: elementData.y,
+                        width: elementData.width,
+                        height: elementData.height
+                    });
+
+                    const elementType = elementData.customType || elementData.type;
+
+                    if (elementType === 'video' && elementData.src) {
+                        videosToCreate++;
+                        console.log('Creating video element for:', elementData.src);
+
+                        // Create HTML video element
+                        const videoElement = document.createElement('video');
+                        videoElement.crossOrigin = 'anonymous';
+                        videoElement.preload = 'auto'; // Changed from 'metadata' to 'auto'
+                        videoElement.muted = false; // Keep audio for export
+                        videoElement.loop = false; // No looping for export
+                        videoElement.playsInline = true;
+                        videoElement.style.position = 'absolute';
+                        videoElement.style.left = '-9999px';
+                        videoElement.style.top = '-9999px';
+                        videoElement.style.width = '1px';
+                        videoElement.style.height = '1px';
+
+                        // Add to DOM so Puppeteer can find it
+                        document.body.appendChild(videoElement);
+
+                        videoElement.onloadedmetadata = function () {
+                            console.log('Video metadata loaded:', {
+                                src: videoElement.src,
+                                duration: videoElement.duration,
+                                videoWidth: videoElement.videoWidth,
+                                videoHeight: videoElement.videoHeight
+                            });
+
+                            // Wait for video to be fully loaded and seekable
+                            const waitForSeekable = () => {
+                                if (videoElement.seekable && videoElement.seekable.length > 0) {
+                                    console.log('Video is seekable, creating Konva elements...');
+                                    createKonvaVideoElement();
+                                } else {
+                                    console.log('Video not yet seekable, waiting...');
+                                    setTimeout(waitForSeekable, 100);
+                                }
+                            };
+
+                            const createKonvaVideoElement = () => {
+                                // Create Konva video group
+                                const videoGroup = new Konva.Group({
+                                    x: elementData.x || 0,
+                                    y: elementData.y || 0,
+                                    width: elementData.width || 100,
+                                    height: elementData.height || 100
+                                });
+
+                                // Create Konva Image linked to video element
+                                const konvaVideo = new Konva.Image({
+                                    x: 0,
+                                    y: 0,
+                                    image: videoElement,
+                                    width: elementData.width || 100,
+                                    height: elementData.height || 100
+                                });
+
+                                videoGroup.add(konvaVideo);
+                                layer.add(videoGroup);
+
+                                // Keep video paused for deterministic frame export
+                                console.log('Video loaded and ready for seeking (staying paused)');
+                                videoElement.pause(); // Ensure it stays paused
+
+                                videosCreated++;
+                                console.log(`Video ${videosCreated}/${videosToCreate} created successfully`);
+
+                                // Check if all videos are created
+                                if (videosCreated >= videosToCreate) {
+                                    setTimeout(() => {
+                                        window.designReady = true;
+                                        console.log('All videos created, design ready');
+                                    }, 2000);
+                                }
+
+                                layer.batchDraw();
+                            };
+
+                            // Start the seekable check
+                            waitForSeekable();
+                        };
+
+                        videoElement.onerror = function (e) {
+                            console.error('Video failed to load:', elementData.src, e);
+                            videosCreated++;
+
+                            // Create placeholder
+                            const placeholder = new Konva.Rect({
+                                x: elementData.x || 0,
+                                y: elementData.y || 0,
+                                width: elementData.width || 100,
+                                height: elementData.height || 100,
+                                fill: '#f0f0f0',
+                                stroke: '#ccc',
+                                strokeWidth: 1
+                            });
+                            layer.add(placeholder);
+
+                            if (videosCreated >= videosToCreate) {
+                                setTimeout(() => {
+                                    window.designReady = true;
+                                    console.log('All videos processed (some failed), design ready');
+                                }, 1000);
+                            }
+
+                            layer.batchDraw();
+                        };
+
+                        // Set the source last to trigger loading
+                        videoElement.src = elementData.src;
+
+                    } else {
+                        // Create other elements using existing createKonvaElement function
+                        const element = createKonvaElement(elementData);
+                        if (element) {
+                            layer.add(element);
+                        }
+                    }
+                });
+
+                // If no videos to create, set ready immediately
+                if (videosToCreate === 0) {
+                    setTimeout(() => {
+                        window.designReady = true;
+                        console.log('No videos to create, design ready');
+                    }, 1000);
+                }
+
+            } else {
+                console.log('No objects to process');
+                window.designReady = true;
+            }
+
+            layer.batchDraw();
+            console.log('=== loadDesign completed ===');
+        };
+
+
+        // Function to seek video to specific time (called by Puppeteer)
+        window.__SEEK_VIDEO__ = function (time) {
+            console.log('🎬 === VIDEO SEEK START ===');
+            console.log('🎯 Target time:', time);
+
+            // Find all video elements and seek them
+            const videos = document.querySelectorAll('video');
+            console.log('📹 Found', videos.length, 'video elements');
+
+            return new Promise((resolve) => {
+                if (videos.length === 0) {
+                    console.log('❌ No videos found, resolving immediately');
+                    resolve();
+                    return;
+                }
+
+                const seekPromises = Array.from(videos).map((video, i) => {
+                    return new Promise((videoResolve) => {
+                        console.log(`📹 Video ${i} BEFORE seek:`, {
+                            src: video.src.substring(video.src.lastIndexOf('/') + 1),
+                            duration: video.duration,
+                            currentTime: video.currentTime.toFixed(3),
+                            readyState: video.readyState,
+                            paused: video.paused,
+                            seeking: video.seeking
+                        });
+
+                        if (!video.duration || isNaN(video.duration)) {
+                            console.warn(`⚠️ Video ${i} has no duration, skipping`);
+                            videoResolve();
+                            return;
+                        }
+
+                        let targetTime = time;
+                        if (targetTime > video.duration) {
+                            targetTime = video.duration - 0.1;
+                        }
+                        if (targetTime < 0) {
+                            targetTime = 0;
+                        }
+
+                        // AGGRESSIVE SEEKING APPROACH FOR HEADLESS CHROME
+                        let seekCompleted = false;
+                        let seekAttempts = 0;
+                        const maxSeekAttempts = 5;
+
+                        const completeSeek = (reason) => {
+                            if (seekCompleted) return;
+                            seekCompleted = true;
+                            
+                            console.log(`✅ Video ${i} seek completed (${reason}):`, {
+                                currentTime: video.currentTime.toFixed(3),
+                                targetTime: targetTime.toFixed(3),
+                                timeDiff: Math.abs(video.currentTime - targetTime).toFixed(3)
+                            });
+                            
+                            videoResolve();
+                        };
+
+                        const attemptSeek = () => {
+                            seekAttempts++;
+                            console.log(`🎯 Video ${i} seek attempt ${seekAttempts}/${maxSeekAttempts}`);
+
+                            // Force pause
+                            video.pause();
+
+                            // Remove any existing event listeners
+                            const cleanup = () => {
+                                video.removeEventListener('seeked', onSeeked);
+                                video.removeEventListener('timeupdate', onTimeUpdate);
+                                video.removeEventListener('canplay', onCanPlay);
+                            };
+
+                            const onSeeked = () => {
+                                console.log(`📹 Video ${i} seeked event: currentTime=${video.currentTime.toFixed(3)}`);
+                                if (Math.abs(video.currentTime - targetTime) < 0.2) {
+                                    cleanup();
+                                    completeSeek('seeked event');
+                                }
+                            };
+
+                            const onTimeUpdate = () => {
+                                if (Math.abs(video.currentTime - targetTime) < 0.1) {
+                                    cleanup();
+                                    completeSeek('timeupdate');
+                                }
+                            };
+
+                            const onCanPlay = () => {
+                                console.log(`📹 Video ${i} canplay event: currentTime=${video.currentTime.toFixed(3)}`);
+                                if (Math.abs(video.currentTime - targetTime) < 0.2) {
+                                    cleanup();
+                                    completeSeek('canplay');
+                                }
+                            };
+
+                            // Add event listeners
+                            video.addEventListener('seeked', onSeeked);
+                            video.addEventListener('timeupdate', onTimeUpdate);
+                            video.addEventListener('canplay', onCanPlay);
+
+                            // Set timeout for this attempt
+                            setTimeout(() => {
+                                cleanup();
+                                
+                                const currentDiff = Math.abs(video.currentTime - targetTime);
+                                console.log(`⏰ Video ${i} attempt ${seekAttempts} timeout - diff: ${currentDiff.toFixed(3)}`);
+                                
+                                if (currentDiff < 0.3) {
+                                    // Close enough, accept it
+                                    completeSeek('timeout but close enough');
+                                } else if (seekAttempts < maxSeekAttempts) {
+                                    // Try again with different approach
+                                    setTimeout(attemptSeek, 200);
+                                } else {
+                                    // Give up and accept whatever we have
+                                    console.warn(`⚠️ Video ${i} giving up after ${maxSeekAttempts} attempts`);
+                                    completeSeek('timeout after max attempts');
+                                }
+                            }, 800);
+
+                            // MULTIPLE SEEKING STRATEGIES
+                            setTimeout(() => {
+                                try {
+                                    // Strategy 1: Direct assignment
+                                    video.currentTime = targetTime;
+                                    console.log(`🎯 Video ${i} direct assignment: ${video.currentTime.toFixed(3)}`);
+                                    
+                                    // Strategy 2: Force reload if first attempt and not working
+                                    if (seekAttempts === 1 && Math.abs(video.currentTime - targetTime) > 0.5) {
+                                        setTimeout(() => {
+                                            console.log(`🔄 Video ${i} forcing reload...`);
+                                            const currentSrc = video.src;
+                                            video.src = '';
+                                            video.load();
+                                            video.src = currentSrc;
+                                            video.load();
+                                            
+                                            setTimeout(() => {
+                                                video.currentTime = targetTime;
+                                                console.log(`🔄 Video ${i} after reload: ${video.currentTime.toFixed(3)}`);
+                                            }, 100);
+                                        }, 100);
+                                    }
+                                    
+                                    // Strategy 3: Multiple rapid assignments
+                                    setTimeout(() => {
+                                        if (Math.abs(video.currentTime - targetTime) > 0.2) {
+                                            for (let j = 0; j < 3; j++) {
+                                                setTimeout(() => {
+                                                    video.currentTime = targetTime;
+                                                }, j * 50);
+                                            }
+                                        }
+                                    }, 150);
+                                    
+                                } catch (error) {
+                                    console.error(`❌ Error seeking video ${i}:`, error);
+                                }
+                            }, 50);
+                        };
+
+                        // Start seeking
+                        attemptSeek();
+                    });
+                });
+
+                // Wait for all videos to complete seeking
+                Promise.all(seekPromises).then(() => {
+                    console.log('🎬 All videos processed, final status:');
+                    
+                    // Final status report
+                    videos.forEach((video, i) => {
+                        console.log(`📹 Video ${i} FINAL:`, {
+                            currentTime: video.currentTime.toFixed(3),
+                            targetTime: time.toFixed(3),
+                            timeDiff: Math.abs(video.currentTime - time).toFixed(3),
+                            success: Math.abs(video.currentTime - time) < 0.5 ? '✅' : '❌'
+                        });
+                    });
+
+                    // Force layer redraw
+                    if (window.__KONVA_STAGE__) {
+                        window.__KONVA_STAGE__.batchDraw();
+                        console.log('🎨 Konva stage redrawn');
+                    }
+                    
+                    console.log('🎬 === VIDEO SEEK END ===');
+                    resolve();
+                });
+            });
+        };
+    </script>
+</body>
+
+</html>
