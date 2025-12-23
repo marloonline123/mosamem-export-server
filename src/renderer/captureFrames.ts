@@ -1,7 +1,7 @@
 import puppeteer from 'puppeteer';
 import { extractAudio } from './audio';
 import { mergeVideo } from './ffmpeg';
-import { writeFile, mkdir, open, stat } from 'fs/promises';
+import { writeFile, mkdir, open, stat, readFile, unlink, } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import { execSync } from 'child_process';
@@ -277,6 +277,10 @@ export async function renderVideo(design: any, exportId: string, webhookUrl?: st
         // Inject robust seeking function
         await page.evaluate(() => {
             window.__SEEK_VIDEO__ = async (time: number) => {
+                if (!Number.isFinite(time)) {
+                    console.warn('__SEEK_VIDEO__ ignored non-finite time:', time);
+                    return;
+                }
                 const videos = Array.from(document.querySelectorAll('video'));
                 if (videos.length === 0) return;
 
@@ -320,6 +324,16 @@ export async function renderVideo(design: any, exportId: string, webhookUrl?: st
             return (window as any).designReady === true;
         }, { timeout: 60000 }); // Increased timeout for video loading
 
+        // Ensure videos have metadata
+        try {
+            await page.waitForFunction(() => {
+                const videos = Array.from(document.querySelectorAll('video'));
+                return videos.every(v => v.readyState >= 1); // HAVE_METADATA
+            }, { timeout: 20000 });
+        } catch (e) {
+            console.warn('Wait for video metadata timed out');
+        }
+
         console.log('Design is ready, getting video duration...');
 
         // Skip browser duration detection, we calculated it accurately.
@@ -340,7 +354,12 @@ export async function renderVideo(design: any, exportId: string, webhookUrl?: st
                     paused: v.paused
                 });
 
-                const testTime = Math.min(1.0, v.duration - 0.1);
+                let testTime = 0.5;
+                if (Number.isFinite(v.duration) && v.duration > 0.5) {
+                    testTime = Math.min(1.0, v.duration - 0.1);
+                } else {
+                    console.warn('Video duration is non-finite or too short:', v.duration);
+                }
 
                 // Try seeking using our __SEEK_VIDEO__ function
                 await window.__SEEK_VIDEO__(testTime);
@@ -510,7 +529,58 @@ export async function renderVideo(design: any, exportId: string, webhookUrl?: st
         // Merge using the already extracted audio path
         await reportProgress(90, 'merging_video');
         await mergeVideo(framesDir, audioPath, exportId);
-        await reportProgress(100, 'completed');
+
+        // Upload to Laravel
+        await reportProgress(95, 'uploading');
+        const videoPath = join(framesDir, '..', `${exportId}.mp4`);
+
+        if (existsSync(videoPath)) {
+            try {
+                const formData = new FormData();
+                const videoBuffer = await readFile(videoPath);
+                const blob = new Blob([videoBuffer], { type: 'video/mp4' });
+
+                formData.append('export_id', exportId);
+                formData.append('video', blob, `${exportId}.mp4`);
+
+                const laravelUrl = process.env.LARAVEL_APP_URL || 'http://localhost:8000';
+                console.log(`Uploading video to ${laravelUrl}/export/webhook/store`);
+
+                const uploadRes = await fetch(`${laravelUrl}/export/webhook/store`, {
+                    method: 'POST',
+                    body: formData as any
+                });
+
+                if (!uploadRes.ok) {
+                    const errorText = await uploadRes.text();
+                    console.error(`Upload failed response: ${errorText}`);
+                    throw new Error(`Upload failed with status: ${uploadRes.status} - ${errorText}`);
+                }
+                console.log('Video uploaded successfully');
+
+                await reportProgress(100, 'completed');
+            } catch (error) {
+                console.error('Upload failed:', error);
+                await reportProgress(100, 'failed'); // Indicate failure or keep it stuck? Let's say failed but maybe we should handle retry.
+                // Actually, if upload fails, key functionality fails.
+                throw error;
+            }
+
+            // Cleanup
+            try {
+                await unlink(videoPath);
+                // Clean frames dir as well - assuming it's done or we can do it here. 
+                // framesDir is usually inside a temp folder for the ID.
+                // We should remove the whole exportId temp folder.
+                // For now, let's minimally clean up the video.
+                // Ideally, a proper cleanup routine should exist.
+            } catch (e) {
+                console.error('Cleanup failed:', e);
+            }
+        } else {
+            console.error('Video file not found after merge:', videoPath);
+            await reportProgress(100, 'failed');
+        }
 
     } catch (error) {
         console.error('Error in renderVideo:', error);

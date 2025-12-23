@@ -3,8 +3,8 @@ import { join } from 'path';
 import { mkdirSync, existsSync } from 'fs';
 
 export function mergeVideo(framesDir: string, audio: string | null, exportId: string) {
-    // Relative to export-server: ../main/storage/app/public/exports
-    const outputDir = join('..', 'main', 'storage', 'app', 'public', 'exports', 'videos');
+    // Output to the same temporary directory structure
+    const outputDir = join(framesDir, '..');
     const output = join(outputDir, `${exportId}.mp4`);
 
     // Create output directory if it doesn't exist
